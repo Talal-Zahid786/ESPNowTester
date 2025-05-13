@@ -4,22 +4,9 @@
 #include <esp_mac.h>
 #include "WiFi.h"
 
-#include <Adafruit_INA219.h>
-#include <Adafruit_MLX90614.h>
-
 #include "config.h"
 #include "sanityCheck.h"
 
-#ifndef debug
-Adafruit_MLX90614 mlx1, mlx2, mlx3, mlx4, mlx5, mlx6, mlx7, mlx8, mlx9, mlx10, mlx11, mlx12, mlx13, mlx14, mlx15, mlx16;
-Adafruit_INA219 ina219;
-#endif
-
-#ifdef USE_UNITS_C
-String unit_str = "-C";
-#elif defined(USE_UNITS_F)
-String unit_str = "-F";
-#endif
 
 double temperature[MAX_SENSOR];
 double maxTemp[MAX_SENSOR];
@@ -29,13 +16,12 @@ float hvx;
 float lvx;
 float svx;
 bool unitC;
-bool enteredFirstTime = true;
 
-uint8_t receierMAC[] = RECEIVER_MAC;
+uint8_t transmittererMAC[] = TRANSMITTER_MAC;
 
 typedef struct espNowData {
   double temperature[16];  // Temperature Array Containing Temperature Readings from all sensors
-  double maxTemp[16];      // Maximum Temperature Array Containing Maximum Temperature Readings from all sensors
+  float maxTemp[16];      // Maximum Temperature Array Containing Maximum Temperature Readings from all sensors
   int noOfSensors;         // Number of sensors being used
   float ivx;               // Instantaneus(Live) Voltage Value
   float hvx;               // Maximum(Highest) Voltage Value
@@ -45,7 +31,7 @@ typedef struct espNowData {
   int hash;                // Hash Calculated based on all other values in the Structure. Used to Detect Data Corruption ot Error
 } espNowData;
 
-espNowData sendingData;
+espNowData receivedData;
 esp_now_peer_info_t peerInfo;
 
 int calculateHash(const espNowData &data) {
@@ -73,11 +59,31 @@ int calculateHash(const espNowData &data) {
   return (int)hash;
 }
 
-void onDataSent(const uint8_t *macAddr, esp_now_send_status_t sendStatus) {
-  if (sendStatus == ESP_NOW_SEND_SUCCESS) {
-    Serial.println("Message sent successfully");
-  } else {
-    Serial.println("Message failed to send");
+void onDataReceived(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
+  uint8_t * src_addr = recv_info->src_addr;
+  Serial.printf("Transmitter MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n", src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
+  memcpy(&receivedData, incomingData, sizeof(receivedData));
+  int temporaryHash = calculateHash(receivedData);
+  Serial.printf("Calculated Hash: %d / Received Hash: %d\n",temporaryHash,receivedData.hash);
+  Serial.print("Data received: ");
+  Serial.println(len);
+  if(temporaryHash == receivedData.hash){
+    Serial.println("Data Received Successfully");
+    Serial.print("Temperature: ");
+    for(int i =0 ; i< MAX_SENSOR; i++){
+      Serial.printf("%.2f / ",receivedData.temperature[i]);
+    }
+    Serial.println();
+    Serial.print("Maximum Temperature: ");
+    for(int i =0 ; i< MAX_SENSOR; i++){
+      Serial.printf("%.2f / ",receivedData.maxTemp[i]);
+    }
+    Serial.println();
+    Serial.printf("Unit_C: %d / Used_Sensors:  %d / Start_volts: %.2f / Instantaneous_volts: %.2f / Max_volts: %.2f / Min_volts: %.2f\n",receivedData.unitC,receivedData.noOfSensors,receivedData.svx,receivedData.ivx,receivedData.hvx,receivedData.lvx);
+    Serial.printf("\n\n");
+  }
+  else{
+    Serial.println("Data is Corrupted");
   }
 }
 
@@ -90,260 +96,20 @@ void esp_init() {
     return;
   }
 
-  // Register peer
-  memcpy(peerInfo.peer_addr, receierMAC, 6);
-  peerInfo.channel = 0;
-  peerInfo.encrypt = false;
-
-  // Add peer
-  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("Failed to add peer");
-    return;
-  }
-  esp_now_register_send_cb(onDataSent);
-
-#ifndef debug
-  for (int i = 0; i < SENSORS_USED; i++) {
-    switch (i) {
-      case 0:
-        mlx1.begin(temperatureI2cAddress[i]);
-      case 1:
-        mlx2.begin(temperatureI2cAddress[i]);
-        break;
-      case 2:
-        mlx3.begin(temperatureI2cAddress[i]);
-        break;
-      case 3:
-        mlx4.begin(temperatureI2cAddress[i]);
-        break;
-      case 4:
-        mlx5.begin(temperatureI2cAddress[i]);
-        break;
-      case 5:
-        mlx6.begin(temperatureI2cAddress[i]);
-        break;
-      case 6:
-        mlx7.begin(temperatureI2cAddress[i]);
-        break;
-      case 7:
-        mlx8.begin(temperatureI2cAddress[i]);
-        break;
-      case 8:
-        mlx9.begin(temperatureI2cAddress[i]);
-        break;
-      case 9:
-        mlx10.begin(temperatureI2cAddress[i]);
-        break;
-      case 10:
-        mlx11.begin(temperatureI2cAddress[i]);
-        break;
-      case 11:
-        mlx12.begin(temperatureI2cAddress[i]);
-        break;
-      case 12:
-        mlx13.begin(temperatureI2cAddress[i]);
-        break;
-      case 13:
-        mlx14.begin(temperatureI2cAddress[i]);
-        break;
-      case 14:
-        mlx15.begin(temperatureI2cAddress[i]);
-        break;
-      case 15:
-        mlx16.begin(temperatureI2cAddress[i]);
-        break;
-    }
-#endif
+  esp_now_register_recv_cb(onDataReceived);
 }
 
-void updateSendingData() {
-#ifdef debug
-    if (enteredFirstTime) {
-      for (int i = 0; i < MAX_SENSOR; i++) {
-        maxTemp[i] = 0;
-        temperature[i] = 0;
-      }
-      svx = random(-26, +26);
-      ivx = svx;
-      lvx = svx;
-      hvx = svx;
-      enteredFirstTime = false;
-    } else {
-      ivx = random(-26, 26);
-      if (ivx >= hvx) {
-        hvx = ivx;
-      } else if (ivx <= lvx) {
-        lvx = ivx;
-      }
-    }
-    noOfSensors = SENSORS_USED;
-#ifdef USE_UNITS_C
-    unitC = true;
-#else
-    unitC = false;
-#endif
-    for (int i = 0; i < SENSORS_USED; i++) {
-      temperature[i] = random(10, 120);
-      if (temperature[i] >= maxTemp[i]) {
-        maxTemp[i] = temperature[i];
-      }
-    }
-#else
-  if (enteredFirstTime) {
-    for (int i = 0; i < MAX_SENSOR; i++) {
-      maxTemp[i] = 0;
-      temperature[i] = 0;
-    }
-    svx = ina219.getBusVoltage_V();
-    ivx = svx;
-    lvx = svx;
-    hvx = svx;
-    enteredFirstTime = false;
-  } else {
-    ivx = ina219.getBusVoltage_V();
-    if (ivx >= hvx) {
-      hvx = ivx;
-    } else if (ivx <= lvx) {
-      lvx = ivx;
-    }
-  }
-  noOfSensors = SENSORS_USED;
-#ifdef(USE_UNITS_C)
-  unitC = true;
-#else
-  unitC = false;
-#endif
-  for (int i = 0; i < SENSORS_USED; i++) {
-    switch (i) {
-      case 0:
-#ifdef USE_UNITS_C
-        temperature[i] = mlx1.readObjectTempC();
-#elif defined(USE_UNITS_F)
-        temperature[i] = mlx1.readObjectTempF();
-#endif
-        break;
-      case 1:
-#ifdef USE_UNITS_C
-        temperature[i] = mlx2.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx2.readObjectTempF();
-#endif
-          break;
-        case 2:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx3.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx3.readObjectTempF();
-#endif
-          break;
-        case 3:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx4.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx4.readObjectTempF();
-#endif
-          break;
-        case 4:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx5.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx5.readObjectTempF();
-#endif
-          break;
-        case 5:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx6.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx6.readObjectTempF();
-#endif
-          break;
-        case 6:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx7.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx7.readObjectTempF();
-#endif
-          break;
-        case 7:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx8.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx8.readObjectTempF();
-#endif
-          break;
-        case 8:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx9.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx9.readObjectTempF();
-#endif
-          break;
-        case 9:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx10.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx10.readObjectTempF();
-#endif
-          break;
-        case 10:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx11.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx11.readObjectTempF();
-#endif
-          break;
-        case 11:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx12.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx12.readObjectTempF();
-#endif
-          break;
-        case 12:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx13.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx13.readObjectTempF();
-#endif
-          break;
-        case 13:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx14.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx14.readObjectTempF();
-#endif
-          break;
-        case 14:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx15.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx15.readObjectTempF();
-#endif
-          break;
-        case 15:
-#ifdef USE_UNITS_C
-            temperature[i] = mlx16.readObjectTempC();
-#elif defined(USE_UNITS_F)
-            temperature[i] = mlx16.readObjectTempF();
-#endif
-          break;
-    }
-    if (temperature[i] >= maxTemp[i]) {
-      maxTemp[i] = temperature[i];
-    }
-  }
-#endif
-  sendingData.svx = svx;
-  sendingData.ivx = ivx;
-  sendingData.lvx = lvx;
-  sendingData.hvx = hvx;
+void updateReceivedData() {
+  svx = receivedData.svx;
+  ivx = receivedData.ivx;
+  lvx = receivedData.lvx;
+  hvx = receivedData.hvx;
   for (int i = 0; i < MAX_SENSOR; i++) {
-    sendingData.temperature[i] = temperature[i];
-    sendingData.maxTemp[i] = maxTemp[i];
+    temperature[i] = receivedData.temperature[i];
+    maxTemp[i] = receivedData.maxTemp[i];
   }
-  sendingData.unitC = unitC;
-  sendingData.noOfSensors = noOfSensors;
-  sendingData.hash = calculateHash(sendingData);
+  unitC = receivedData.unitC;
+  noOfSensors = receivedData.noOfSensors;
 }
 
 void setup() {
@@ -352,11 +118,6 @@ void setup() {
 }
 
 void loop() {
-  updateSendingData();
-  esp_err_t result = esp_now_send(receierMAC, (uint8_t *)&sendingData, sizeof(sendingData));
-  if (result == ESP_OK) {
-    Serial.println("Sending confirmed");
-  } else {
-    Serial.println("Sending error");
-  }
+  updateReceivedData();
+  delay(DELAY);
 }
