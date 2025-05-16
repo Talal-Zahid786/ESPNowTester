@@ -209,10 +209,6 @@ void updateSendingData() {
   sendingData.cvx = cvx;
   sendingData.lvx = lvx;
   sendingData.hvx = hvx;
-  // for (int i = 0; i < 16; i++) {
-  //   sendingData.temperature[i] = temperature[i];
-  //   sendingData.maxTemp[i] = maxTemp[i];
-  // }
   memcpy(&sendingData.temperature,&temperature,sizeof(temperature));
   memcpy(&sendingData.maxTemp,&maxTemp,sizeof(maxTemp));
   sendingData.unitC = unitC;
@@ -222,7 +218,6 @@ void updateSendingData() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(2,OUTPUT);
   esp_init();
 }
 
@@ -231,10 +226,6 @@ void loop() {
   esp_err_t result = esp_now_send(receiverMac, (uint8_t *)&sendingData, sizeof(sendingData));
   if (result == ESP_OK) {
     Serial.println("Sending confirmed");
-    digitalWrite(2, HIGH);
-    delay(500);
-    digitalWrite(2, LOW);
-    delay(500);
   } else {
     Serial.println("Sending error");
   }

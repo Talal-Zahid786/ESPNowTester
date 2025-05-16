@@ -119,7 +119,6 @@ void sendDataByUart(){
   memcpy(&buffer[2], &receivedData, sizeof(espNowData));
   //Send over UART
   Serial.write(buffer, sizeof(buffer));
-  //Serial.write((uint8_t*)&receivedData, sizeof(receivedData));
 }
 
 void setup() {
