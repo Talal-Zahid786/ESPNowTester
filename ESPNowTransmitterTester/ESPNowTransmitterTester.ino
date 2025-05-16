@@ -1,6 +1,5 @@
 #include <Arduino.h>
-#include <ESP32_NOW.h>
-#include <ESP32_NOW_Serial.h>
+#include "esp_now.h"
 #include <esp_mac.h>
 #include "WiFi.h"
 
@@ -21,10 +20,10 @@ String unit_str = "-C";
 String unit_str = "-F";
 #endif
 
-double temperature[MAX_SENSOR];
-double maxTemp[MAX_SENSOR];
+float temperature[16];
+float maxTemp[16];
 int noOfSensors;
-float ivx;
+float cvx;
 float hvx;
 float lvx;
 float svx;
@@ -33,17 +32,17 @@ bool enteredFirstTime = true;
 
 uint8_t receiverMac[] = RECEIVER_MAC;
 
-typedef struct espNowData {
-  double temperature[16];
+typedef struct __attribute__((packed))espNowData {
+  float temperature[16];
   float maxTemp[16];
   int noOfSensors;
-  float ivx;
+  float cvx;
   float hvx;
   float lvx;
   float svx;
   bool unitC;
   int hash;
-} espNowData;
+}espNowData;
 
 espNowData sendingData;
 esp_now_peer_info_t peerInfo;
@@ -54,7 +53,7 @@ int calculateHash(const espNowData &data) {
     hash ^= (unsigned long)(data.temperature[i] * 1000);
     hash ^= (unsigned long)(data.maxTemp[i] * 1000) << 1;
   }
-  hash ^= (unsigned long)(data.ivx * 1000) << 2;
+  hash ^= (unsigned long)(data.cvx * 1000) << 2;
   hash ^= (unsigned long)(data.hvx * 1000) << 3;
   hash ^= (unsigned long)(data.lvx * 1000) << 4;
   hash ^= (unsigned long)(data.svx * 1000) << 5;
@@ -70,16 +69,16 @@ void onDataSent(const uint8_t *macAddr, esp_now_send_status_t sendStatus) {
     Serial.printf("Calculated Hash: %d / Sent Hash: %d\n", sendingData.hash, sendingData.hash);
     Serial.printf("Receiver MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n", receiverMac[0], receiverMac[1], receiverMac[2], receiverMac[3], receiverMac[4], receiverMac[5]);
     Serial.print("Temperature: ");
-    for (int i = 0; i < MAX_SENSOR; i++) {
+    for (int i = 0; i < 16; i++) {
       Serial.printf("%.2f / ", sendingData.temperature[i]);
     }
     Serial.println();
     Serial.print("Maximum Temperature: ");
-    for (int i = 0; i < MAX_SENSOR; i++) {
+    for (int i = 0; i < 16; i++) {
       Serial.printf("%.2f / ", sendingData.maxTemp[i]);
     }
     Serial.println();
-    Serial.printf("Unit_C: %d / Used_Sensors:  %d / Start_volts: %.2f / Instantaneous_volts: %.2f / Max_volts: %.2f / Min_volts: %.2f\n", sendingData.unitC, sendingData.noOfSensors, sendingData.svx, sendingData.ivx, sendingData.hvx, sendingData.lvx);
+    Serial.printf("Unit_C: %d / Used_Sensors:  %d / Start_volts: %.2f / Instantaneous_volts: %.2f / Max_volts: %.2f / Min_volts: %.2f\n", sendingData.unitC, sendingData.noOfSensors, sendingData.svx, sendingData.cvx, sendingData.hvx, sendingData.lvx);
   } else {
     Serial.println("Message failed to send");
   }
@@ -133,19 +132,19 @@ void esp_init() {
 void updateSendingData() {
 #ifdef debug
   if (enteredFirstTime) {
-    for (int i = 0; i < MAX_SENSOR; i++) {
+    for (int i = 0; i < 16; i++) {
       maxTemp[i] = 0;
       temperature[i] = 0;
     }
     svx = random(-26, +26);
-    ivx = svx;
+    cvx = svx;
     lvx = svx;
     hvx = svx;
     enteredFirstTime = false;
   } else {
-    ivx = random(-26, 26);
-    if (ivx >= hvx) hvx = ivx;
-    if (ivx <= lvx) lvx = ivx;
+    cvx = random(-26, 26);
+    if (cvx >= hvx) hvx = cvx;
+    if (cvx <= lvx) lvx = cvx;
   }
   noOfSensors = SENSORS_USED;
 #ifdef USE_UNITS_C
@@ -161,19 +160,19 @@ void updateSendingData() {
   }
 #else
   if (enteredFirstTime) {
-    for (int i = 0; i < MAX_SENSOR; i++) {
+    for (int i = 0; i < 16; i++) {
       maxTemp[i] = 0;
       temperature[i] = 0;
     }
     svx = ina219.getBusVoltage_V();
-    ivx = svx;
+    cvx = svx;
     lvx = svx;
     hvx = svx;
     enteredFirstTime = false;
   } else {
-    ivx = ina219.getBusVoltage_V();
-    if (ivx >= hvx) hvx = ivx;
-    if (ivx <= lvx) lvx = ivx;
+    cvx = ina219.getBusVoltage_V();
+    if (cvx >= hvx) hvx = cvx;
+    if (cvx <= lvx) lvx = cvx;
   }
   noOfSensors = SENSORS_USED;
   unitC = defined(USE_UNITS_C);
@@ -202,17 +201,20 @@ void updateSendingData() {
     if (temperature[i] >= maxTemp[i]) {
       maxTemp[i] = temperature[i];
     }
+    delay(DELAY);
   }
 #endif
 
   sendingData.svx = svx;
-  sendingData.ivx = ivx;
+  sendingData.cvx = cvx;
   sendingData.lvx = lvx;
   sendingData.hvx = hvx;
-  for (int i = 0; i < MAX_SENSOR; i++) {
-    sendingData.temperature[i] = temperature[i];
-    sendingData.maxTemp[i] = maxTemp[i];
-  }
+  // for (int i = 0; i < 16; i++) {
+  //   sendingData.temperature[i] = temperature[i];
+  //   sendingData.maxTemp[i] = maxTemp[i];
+  // }
+  memcpy(&sendingData.temperature,&temperature,sizeof(temperature));
+  memcpy(&sendingData.maxTemp,&maxTemp,sizeof(maxTemp));
   sendingData.unitC = unitC;
   sendingData.noOfSensors = noOfSensors;
   sendingData.hash = calculateHash(sendingData);
@@ -220,6 +222,7 @@ void updateSendingData() {
 
 void setup() {
   Serial.begin(115200);
+  pinMode(2,OUTPUT);
   esp_init();
 }
 
@@ -228,8 +231,12 @@ void loop() {
   esp_err_t result = esp_now_send(receiverMac, (uint8_t *)&sendingData, sizeof(sendingData));
   if (result == ESP_OK) {
     Serial.println("Sending confirmed");
+    digitalWrite(2, HIGH);
+    delay(500);
+    digitalWrite(2, LOW);
+    delay(500);
   } else {
     Serial.println("Sending error");
   }
-  delay(DELAY);
+  delay(2000);
 }

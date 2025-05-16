@@ -1,35 +1,33 @@
 #include <Arduino.h>
-#include <ESP32_NOW.h>
-#include <ESP32_NOW_Serial.h>
+#include "esp_now.h"
 #include <esp_mac.h>
 #include "WiFi.h"
 
 #include "config.h"
 #include "sanityCheck.h"
 
-
-double temperature[MAX_SENSOR];
-double maxTemp[MAX_SENSOR];
+float temperature[16];
+float maxTemp[16];
 int noOfSensors;
-float ivx;
+float cvx;
 float hvx;
 float lvx;
 float svx;
 bool unitC;
 
-uint8_t transmittererMAC[] = TRANSMITTER_MAC;
+uint8_t temperatureTransmitterMAC[] = TEMPERATURE_TRANSMITTER_MAC;
 
-typedef struct espNowData {
-  double temperature[16];  // Temperature Array Containing Temperature Readings from all sensors
+typedef struct __attribute__((packed))espNowData {
+  float temperature[16];  // Temperature Array Containing Temperature Readings from all sensors
   float maxTemp[16];      // Maximum Temperature Array Containing Maximum Temperature Readings from all sensors
   int noOfSensors;         // Number of sensors being used
-  float ivx;               // Instantaneus(Live) Voltage Value
+  float cvx;               // Instantaneus(Live) Voltage Value
   float hvx;               // Maximum(Highest) Voltage Value
   float lvx;               // Minimum(Lowest) Voltage Value
   float svx;               // Starting(First Reading) Voltage Value
   bool unitC;              // Flag to select Temperature Unit (°C or °F)
   int hash;                // Hash Calculated based on all other values in the Structure. Used to Detect Data Corruption ot Error
-} espNowData;
+}espNowData;
 
 espNowData receivedData;
 esp_now_peer_info_t peerInfo;
@@ -44,7 +42,7 @@ int calculateHash(const espNowData &data) {
   }
 
   // Process voltage values
-  hash ^= (unsigned long)(data.ivx * 1000) << 2;
+  hash ^= (unsigned long)(data.cvx * 1000) << 2;
   hash ^= (unsigned long)(data.hvx * 1000) << 3;
   hash ^= (unsigned long)(data.lvx * 1000) << 4;
   hash ^= (unsigned long)(data.svx * 1000) << 5;
@@ -59,9 +57,8 @@ int calculateHash(const espNowData &data) {
   return (int)hash;
 }
 
-void onDataReceived(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
-  uint8_t * src_addr = recv_info->src_addr;
-  Serial.printf("Transmitter MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n", src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
+void onDataReceived(const uint8_t *src_addr, const uint8_t *incomingData, int len) {
+  Serial.printf("\n\nTransmitter MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n", src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
   memcpy(&receivedData, incomingData, sizeof(receivedData));
   int temporaryHash = calculateHash(receivedData);
   Serial.printf("Calculated Hash: %d / Received Hash: %d\n",temporaryHash,receivedData.hash);
@@ -70,17 +67,18 @@ void onDataReceived(const esp_now_recv_info_t *recv_info, const uint8_t *incomin
   if(temporaryHash == receivedData.hash){
     Serial.println("Data Received Successfully");
     Serial.print("Temperature: ");
-    for(int i =0 ; i< MAX_SENSOR; i++){
+    for(int i =0 ; i< 16; i++){
       Serial.printf("%.2f / ",receivedData.temperature[i]);
     }
     Serial.println();
     Serial.print("Maximum Temperature: ");
-    for(int i =0 ; i< MAX_SENSOR; i++){
+    for(int i =0 ; i< 16; i++){
       Serial.printf("%.2f / ",receivedData.maxTemp[i]);
     }
     Serial.println();
-    Serial.printf("Unit_C: %d / Used_Sensors:  %d / Start_volts: %.2f / Instantaneous_volts: %.2f / Max_volts: %.2f / Min_volts: %.2f\n",receivedData.unitC,receivedData.noOfSensors,receivedData.svx,receivedData.ivx,receivedData.hvx,receivedData.lvx);
+    Serial.printf("Unit_C: %d / Used_Sensors:  %d / Start_volts: %.2f / Instantaneous_volts: %.2f / Max_volts: %.2f / Min_volts: %.2f\n",receivedData.unitC,receivedData.noOfSensors,receivedData.svx,receivedData.cvx,receivedData.hvx,receivedData.lvx);
     Serial.printf("\n\n");
+    sendDataByUart();
   }
   else{
     Serial.println("Data is Corrupted");
@@ -101,15 +99,27 @@ void esp_init() {
 
 void updateReceivedData() {
   svx = receivedData.svx;
-  ivx = receivedData.ivx;
+  cvx = receivedData.cvx;
   lvx = receivedData.lvx;
   hvx = receivedData.hvx;
-  for (int i = 0; i < MAX_SENSOR; i++) {
+  unitC = receivedData.unitC;
+  noOfSensors = receivedData.noOfSensors;
+  // memcpy(&temperature, &receivedData.temperature, sizeof(receivedData.temperature));
+  // memcpy(&maxTemp, &receivedData.maxTemp, sizeof(receivedData.maxTemp));
+  for (int i = 0; i < noOfSensors; i++) {
     temperature[i] = receivedData.temperature[i];
     maxTemp[i] = receivedData.maxTemp[i];
   }
-  unitC = receivedData.unitC;
-  noOfSensors = receivedData.noOfSensors;
+}
+
+void sendDataByUart(){
+  uint8_t buffer[2+sizeof(espNowData)];
+  buffer[0] = 0xAA;
+  buffer[1] = 0x15;
+  memcpy(&buffer[2], &receivedData, sizeof(espNowData));
+  //Send over UART
+  Serial.write(buffer, sizeof(buffer));
+  //Serial.write((uint8_t*)&receivedData, sizeof(receivedData));
 }
 
 void setup() {
@@ -119,5 +129,5 @@ void setup() {
 
 void loop() {
   updateReceivedData();
-  delay(DELAY);
+  delay(50);
 }
